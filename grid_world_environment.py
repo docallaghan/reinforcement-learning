@@ -7,6 +7,7 @@ Author: David O'Callaghan
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import colors
+import pandas as pd
 import time
 import random
 
@@ -125,7 +126,10 @@ class GridWorldEnvironment:
         self.ax.set_yticks(np.arange(-.5, self.grid_rows, 1))
         
         # Disable tick labels
-        self.ax.tick_params(labelleft=False, labelbottom=False) 
+        self.ax.tick_params(labelleft=False, labelbottom=False)
+        
+        # Invert y-axis - (0,0) at top left instead of bottom left
+        self.ax.set_ylim(self.ax.get_ylim()[::-1])
         
     def display_grid(self):
         """
@@ -144,7 +148,10 @@ class GridWorldEnvironment:
                 action, self.agent_location)
         reward = self.get_reward(self.agent_location)
         self.grid[self.agent_location] = self.blue
-        return reward
+        
+        # TODO: State should be more than agent location
+        obs = self.agent_location
+        return obs, reward
         #return obs, reward, done, info
     
     def get_next_agent_location(self, action, agent_location):
@@ -187,31 +194,115 @@ class GridWorldEnvironment:
     
     def render(self):
         pass
-    
+        
 class Agent:
-    def __init__(self, state):
-        self.state = state
-        self.actions = [0, 1, 2, 3, 4] # up, down, left, right, stay
+    def __init__(self, init_state):
+        self.init_state = init_state
+        self.state = init_state
+        self.actions = [0, 1, 2, 3] # up, down, left, right
         
         self.alpha = 0.5 # Learning Rate
         self.gamma = 0.9 # Discount
         self.eps = 0.1 # Epsillon greedy
+    
+    def q_learning(self, env, episodes):
+        # Initial Q(s,a) to zeros
+        self.q_values = np.zeros((*env.grid.shape, len(self.actions)))
+        stats = []
+        # Loop for each episode
+        for n in range(episodes): 
+            s = self.init_state # Initialise s
+            rs = 0 # To store reward per episode
+            
+            step = 0
+            while True: # Loop for each step in the episode
+                
+                # Choose action using policy derived from Q
+                a = self.get_action(s)
+                
+                # Take action a and overve r and s'
+                s_, r = env.step(a)
+                rs += r
+                
+                # Update Q value
+                qmax = self.get_qmax(s_)
+                self.q_values[(*s,a)] += self.alpha * ( r + self.gamma*qmax - self.q_values[(*s,a)] )
+                step += 1
+                if step >= 30:
+                    break
+            stats.append([n, rs])
+        self.stats = np.array(stats) # Save for plotting
+        env.reset()
+            
+    def get_action(self, state):
+        if np.random.rand() < self.eps:
+            action =  np.random.choice(self.actions)
+        else:
+            q_values = self.q_values.copy()
+            q_values_state = q_values[state[0], state[1],:]
+            action = np.argmax(q_values_state)
+        return action
+    
+    def get_qmax(self, state):
+        q_values = self.q_values.copy()
+        q_values_state = q_values[state[0], state[1],:]
+        return np.max(q_values_state)
+            
+    def show_q_values(self):
+        max_q_values = np.round(np.max(self.q_values, axis=2), 3)
+        max_q_values = pd.DataFrame(max_q_values)
+        print('Action Value Estimates:')
+        print(max_q_values)
+        print()
+        
+    def show_action_grid(self):
+        action_grid = np.argmax(self.q_values, axis=2)
+        actions = ['    U', '    D', '    L', '    R']
+        action_grid_list = []
+        for i in range(action_grid.shape[0]):
+            row = []
+            for j in range(action_grid.shape[1]):
+                action_num = action_grid[i,j]
+                row.append(actions[action_num])
+            action_grid_list.append(row)
+        action_grid_list = pd.DataFrame(action_grid_list)
+        print('Actions:')
+        print(action_grid_list)
+        print()
+        
+    def plot_learning_curve(self):
+        plt.plot(self.stats[:,0], self.stats[:,1], '-', alpha=0.8, linewidth=0.5)
+        plt.xlabel('Episodes')
+        plt.ylabel('Reward per Episode')
+        plt.show()
+        
+    
 
         
 if __name__=="__main__":
     # Set seeds
-    random.seed(23) # Remove for randomised grid
-    np.random.seed(23)
+#    random.seed(23) # Remove for randomised grid
+#    np.random.seed(23)
     
     env = GridWorldEnvironment(size=(8,8), item_nums=(3,3,2))
     #env.reset()
-    total_reward = 0
-    for _ in range(200):
-        env.display_grid()
-        plt.show()
-        action = random.choice([0,1,2,3])
-        reward = env.step(action)
-        print(reward)
-        total_reward += reward
-        #time.sleep(0.3)
-    print(total_reward)
+#    total_reward = 0
+#    for _ in range(200):
+#        env.display_grid()
+#        plt.show()
+#        action = random.choice([0,1,2,3])
+#        obs, reward = env.step(action)
+#        print(reward)
+#        total_reward += reward
+#    print(total_reward)
+
+    # Instantiate Agent
+    ag = Agent(init_state=(0,0))
+    # Run Q Learning algorithm
+    ag.q_learning(env, 100)
+    
+    ag.show_q_values()
+    ag.show_action_grid()
+
+    # Plotting
+    ag.plot_learning_curve()
