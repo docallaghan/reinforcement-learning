@@ -137,7 +137,7 @@ class GridWorldEnvironment:
         Displays the current state of the gridworld
         """  
         if self.ax == None:
-            self.ax = plt.gca()
+            _, self.ax = plt.subplots()
             self.initialise_grid_display()
         self.image.set_data(self.grid)
         plt.draw()
@@ -214,8 +214,8 @@ class Agent:
         self.state = init_state
         self.actions = [0, 1, 2, 3] # up, down, left, right
         
-        self.alpha = 0.5 # Learning Rate
-        self.gamma = 0.99 # Discount
+        self.alpha = 0.1 # Learning Rate
+        self.gamma = 0.9 # Discount
         self.eps = 0.1 # Epsillon greedy
     
     def q_learning(self, env, episodes):
@@ -242,7 +242,7 @@ class Agent:
                 self.q_values[(*s,a)] += self.alpha * ( r + self.gamma*qmax - self.q_values[(*s,a)] )
                 step += 1
                 s = s_
-                if step >= 500 or done:
+                if step >= 300 or done:
                     print(f'Episode over after {step} steps')
                     break
             stats.append([n, rs])
@@ -254,22 +254,20 @@ class Agent:
         if np.random.rand() < self.eps:
             action =  np.random.choice(self.actions)
         else:
-            #q_values = self.q_values.copy()
             q_values_state = self.q_values[state[0], state[1],:]
             action = np.argmax(q_values_state)
         return action
     
     def get_qmax(self, state):
-        #q_values = self.q_values.copy()
         q_values_state = self.q_values[state[0], state[1],:]
         return np.max(q_values_state)
         
     def plot_learning_curve(self):
-        #plt.plot(self.stats[:,0], self.stats[:,1], '-', alpha=0.8, linewidth=0.5)
-        plt.plot(self.stats[:,0], self.stats[:,1], '-')
-        plt.xlabel('Episodes')
-        plt.ylabel('Reward per Episode')
-        plt.show()
+        fig, ax = plt.subplots()
+
+        ax.plot(self.stats[:,0], self.stats[:,1], '-')
+        ax.set_xlabel('Episodes')
+        ax.set_ylabel('Reward per Episode')
         
     def play_episode(self, env):
         
@@ -284,26 +282,16 @@ class Agent:
             #print(a, r, s)
             step += 1
             # Check if terminal
-            if step >= 200 or done:
-                #print(f'Episode over after {step} steps')
+            if step >= 100 or done:
                 break
         
 if __name__=="__main__":
     # Set seeds
-#    random.seed(23) # Remove for randomised grid
-#    np.random.seed(23)
+    random.seed(23) # Remove for randomised grid
+    np.random.seed(23)
     
     env = GridWorldEnvironment(size=(8,8), item_nums=(3,3,2), rand=False)
-    #env.reset()
-#    total_reward = 0
-#    for _ in range(200):
-#        env.display_grid()
-#        plt.show()
-#        action = random.choice([0,1,2,3])
-#        obs, reward = env.step(action)
-#        print(reward)
-#        total_reward += reward
-#    print(total_reward)
+
 
     # Instantiate Agent
     ag = Agent(init_state=(0,0))
@@ -316,10 +304,10 @@ if __name__=="__main__":
     # Plotting
     
     ag.plot_learning_curve()
-    time.sleep(3)
+    #time.sleep(3)
     
     # Play episode with greedy policy
-    plt.close()
+    #plt.close()
     
     ag.play_episode(env)
     # Run %matplotlib qt if in spyder
