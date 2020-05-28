@@ -11,12 +11,6 @@ import pandas as pd
 import time
 import random
 
-color_list = ['black', 'red', 'green', 'yellow', 'blue', 'pink', 'dimgrey']
-n_colours = len(color_list)
-cmap = colors.ListedColormap(color_list)
-bounds = [i for i in range(n_colours + 1)]
-norm = colors.BoundaryNorm(bounds, cmap.N)
-
 class GridWorldEnvironment:
     
     # Encoding for colours
@@ -32,7 +26,7 @@ class GridWorldEnvironment:
     green_reward = 1.0
     yellow_reward = 1.0
     
-    def __init__(self, size, item_nums):
+    def __init__(self, size, item_nums, rand=True):
         
         # Grid dimensions
         self.grid_rows = size[0]
@@ -42,6 +36,8 @@ class GridWorldEnvironment:
         self.num_red = item_nums[0]
         self.num_green = item_nums[1]
         self.num_yellow = item_nums[2]
+        
+        self.rand = rand
         
         # Reset the env
         self.reset()
@@ -65,7 +61,12 @@ class GridWorldEnvironment:
         self.grid[self.agent_location] = self.blue
         
         # Get locations for each coloured item
-        red_locs, green_locs, yellow_locs = self.randomise_items()
+        if self.rand:
+            red_locs, green_locs, yellow_locs = self.randomise_items()
+        else:
+            red_locs = [(5, 3), (3, 2), (2, 2)] 
+            green_locs = [(2, 4), (4, 4), (4, 3)] 
+            yellow_locs = [(2, 5), (5, 2)]
         
         # Set colours in grid
         for loc in red_locs:
@@ -112,7 +113,7 @@ class GridWorldEnvironment:
         n_colours = len(color_list)
         self.cmap = colors.ListedColormap(color_list)
         bounds = [i for i in range(n_colours + 1)]
-        self.norm = colors.BoundaryNorm(bounds, cmap.N)
+        self.norm = colors.BoundaryNorm(bounds, self.cmap.N)
         
     def initialise_grid_display(self):
         self.ax.set_xlim(-0.5, self.grid_cols - 0.5)
@@ -140,7 +141,7 @@ class GridWorldEnvironment:
             self.initialise_grid_display()
         self.image.set_data(self.grid)
         plt.draw()
-        plt.pause(0.001)
+        plt.pause(0.05)
         
     def step(self, action):
         self.grid[self.agent_location] = self.black
@@ -151,8 +152,20 @@ class GridWorldEnvironment:
         
         # TODO: State should be more than agent location
         obs = self.agent_location
-        return obs, reward
+        
+        done = self.check_terminal_state()
+        return obs, reward, done
         #return obs, reward, done, info
+        
+    def check_terminal_state(self):
+        """
+        Checks if all items have been gathered.
+        Returns:
+            Boolean True if all are gathered, otherwise False
+        """
+        grid = self.grid.copy()
+        grid[self.agent_location] = self.black
+        return np.sum(grid) == 0
     
     def get_next_agent_location(self, action, agent_location):
         if action == 4: # Stay
@@ -202,7 +215,7 @@ class Agent:
         self.actions = [0, 1, 2, 3] # up, down, left, right
         
         self.alpha = 0.5 # Learning Rate
-        self.gamma = 0.9 # Discount
+        self.gamma = 0.99 # Discount
         self.eps = 0.1 # Epsillon greedy
     
     def q_learning(self, env, episodes):
@@ -221,70 +234,66 @@ class Agent:
                 a = self.get_action(s)
                 
                 # Take action a and overve r and s'
-                s_, r = env.step(a)
+                s_, r, done = env.step(a)
                 rs += r
                 
                 # Update Q value
                 qmax = self.get_qmax(s_)
                 self.q_values[(*s,a)] += self.alpha * ( r + self.gamma*qmax - self.q_values[(*s,a)] )
                 step += 1
-                if step >= 30:
+                s = s_
+                if step >= 500 or done:
+                    print(f'Episode over after {step} steps')
                     break
             stats.append([n, rs])
+            env.reset()
         self.stats = np.array(stats) # Save for plotting
-        env.reset()
+        
             
     def get_action(self, state):
         if np.random.rand() < self.eps:
             action =  np.random.choice(self.actions)
         else:
-            q_values = self.q_values.copy()
-            q_values_state = q_values[state[0], state[1],:]
+            #q_values = self.q_values.copy()
+            q_values_state = self.q_values[state[0], state[1],:]
             action = np.argmax(q_values_state)
         return action
     
     def get_qmax(self, state):
-        q_values = self.q_values.copy()
-        q_values_state = q_values[state[0], state[1],:]
+        #q_values = self.q_values.copy()
+        q_values_state = self.q_values[state[0], state[1],:]
         return np.max(q_values_state)
-            
-    def show_q_values(self):
-        max_q_values = np.round(np.max(self.q_values, axis=2), 3)
-        max_q_values = pd.DataFrame(max_q_values)
-        print('Action Value Estimates:')
-        print(max_q_values)
-        print()
-        
-    def show_action_grid(self):
-        action_grid = np.argmax(self.q_values, axis=2)
-        actions = ['    U', '    D', '    L', '    R']
-        action_grid_list = []
-        for i in range(action_grid.shape[0]):
-            row = []
-            for j in range(action_grid.shape[1]):
-                action_num = action_grid[i,j]
-                row.append(actions[action_num])
-            action_grid_list.append(row)
-        action_grid_list = pd.DataFrame(action_grid_list)
-        print('Actions:')
-        print(action_grid_list)
-        print()
         
     def plot_learning_curve(self):
-        plt.plot(self.stats[:,0], self.stats[:,1], '-', alpha=0.8, linewidth=0.5)
+        #plt.plot(self.stats[:,0], self.stats[:,1], '-', alpha=0.8, linewidth=0.5)
+        plt.plot(self.stats[:,0], self.stats[:,1], '-')
         plt.xlabel('Episodes')
         plt.ylabel('Reward per Episode')
         plt.show()
         
-    
-
+    def play_episode(self, env):
+        
+        env.reset()
+        step = 0
+        s = self.init_state
+        while True:
+            env.display_grid()
+            a = self.get_action(s)
+            # Take action
+            s, r, done = env.step(a)
+            #print(a, r, s)
+            step += 1
+            # Check if terminal
+            if step >= 200 or done:
+                #print(f'Episode over after {step} steps')
+                break
         
 if __name__=="__main__":
     # Set seeds
 #    random.seed(23) # Remove for randomised grid
 #    np.random.seed(23)
     
-    env = GridWorldEnvironment(size=(8,8), item_nums=(3,3,2))
+    env = GridWorldEnvironment(size=(8,8), item_nums=(3,3,2), rand=False)
     #env.reset()
 #    total_reward = 0
 #    for _ in range(200):
@@ -299,10 +308,18 @@ if __name__=="__main__":
     # Instantiate Agent
     ag = Agent(init_state=(0,0))
     # Run Q Learning algorithm
-    ag.q_learning(env, 100)
+    ag.q_learning(env, 1000)
     
-    ag.show_q_values()
-    ag.show_action_grid()
+    #ag.show_q_values()
+    #ag.show_action_grid()
 
     # Plotting
+    
     ag.plot_learning_curve()
+    time.sleep(3)
+    
+    # Play episode with greedy policy
+    plt.close()
+    
+    ag.play_episode(env)
+    # Run %matplotlib qt if in spyder
