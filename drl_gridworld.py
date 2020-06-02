@@ -3,9 +3,18 @@
 Created on Tue Jun  2 15:33:48 2020
 
 Author: David O'Callaghan
+
+This code is based off the blogpost at http://outlace.com/rlpart3.html
 """
 
 import numpy as np
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Activation
+from tensorflow.keras.optimizers import RMSprop
+
+from IPython.display import clear_output
+import random
+
 
 GRID_N = 4
 
@@ -86,10 +95,10 @@ def make_move(state, action):
     
     new_loc = (agent_loc[0] + actions[action][0], 
                agent_loc[1] + actions[action][1])
-    
+
     # Take action
     if new_loc != wall:
-        if ((np.array(new_loc) <= (GRID_N,GRID_N)).all() and 
+        if ((np.array(new_loc) <= (GRID_N-1,GRID_N-1)).all() and 
             (np.array(new_loc) >= (0,0)).all()):
             state[new_loc[0], new_loc[1], 3] = 1 # Agent channel is 3
     
@@ -146,10 +155,92 @@ def disp_grid(state):
     
     return grid
 
+def testAlgo(init=0):
+    i = 0
+    if init==0:
+        state = init_grid()
+    elif init==1:
+        state = init_grid_player()
+    elif init==2:
+        state = init_grid_rand()
+
+    print("Initial State:")
+    print(disp_grid(state))
+    status = 1
+    #while game still in progress
+    while(status == 1):
+        qval = model.predict(state.reshape(1,64), batch_size=1)
+        action = (np.argmax(qval)) #take action with highest Q-value
+        print('Move #: %s; Taking action: %s' % (i, action))
+        state = make_move(state, action)
+        print(disp_grid(state))
+        reward = get_reward(state)
+        if reward != -1:
+            status = 0
+            print("Reward: %s" % (reward,))
+        i += 1 #If we're taking more than 10 actions, just stop, we probably can't win this game
+        if (i > 10):
+            print("Game lost; too many moves.")
+            break
+
 if __name__ == "__main__":
     state = init_grid_rand()
     print(disp_grid(state))
     state = make_move(state, 3)
     print(disp_grid(state))
+    
+    input_size = GRID_N*GRID_N*4 # 64
+    model = Sequential([
+            Dense(164, input_shape=(input_size,), activation='relu'),
+            Dense(150, activation='relu'),
+            Dense(4, activation='linear')
+            ])
+
+    rms = RMSprop()
+    model.compile(loss='mse', optimizer=rms)
+    
+    epochs = 1000
+    gamma = 0.9 #since it may take several moves to goal, making gamma high
+    epsilon = 1
+    for i in range(epochs):
+        
+        state = init_grid()
+        status = 1
+        #while game still in progress
+        while(status == 1):
+            #We are in state S
+            #Let's run our Q function on S to get Q values for all possible actions
+            qval = model.predict(state.reshape(1,64), batch_size=1)
+            if (random.random() < epsilon): #choose random action
+                action = np.random.randint(0,4)
+            else: #choose best action from Q(s,a) values
+                action = (np.argmax(qval))
+            #Take action, observe new state S'
+            new_state = make_move(state, action)
+            #Observe reward
+            reward = get_reward(new_state)
+            #Get max_Q(S',a)
+            newQ = model.predict(new_state.reshape(1,64), batch_size=1)
+            maxQ = np.max(newQ)
+            y = np.zeros((1,4))
+            y[:] = qval[:]
+            if reward == -1: #non-terminal state
+                update = (reward + (gamma * maxQ))
+            else: #terminal state
+                update = reward
+            y[0][action] = update #target output
+            
+            history = model.fit(state.reshape(1,64), y, batch_size=1, epochs=1, verbose=0)
+            loss = history.history['loss'][0]
+            print('\r', end='')
+            print("Game: {}  Loss: {}".format(i, loss), end='')
+            state = new_state
+            if reward != -1:
+                status = 0
+            clear_output(wait=True)
+        if epsilon > 0.1:
+            epsilon -= (1/epochs)
+    
+    testAlgo(init=0)
     
     
