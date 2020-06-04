@@ -158,8 +158,8 @@ class Agent:
     def train_nn(self, episodes, max_steps=20):
 
         self.model = keras.Sequential([
-                keras.layers.Dense(16, input_shape=(self.input_size,), activation='elu'),
-                keras.layers.Dense(16, activation='elu'),
+                keras.layers.Dense(128, input_shape=(self.input_size,), activation='elu'),
+                keras.layers.Dense(64, activation='elu'),
                 keras.layers.Dense(4)
                 ])
         self.rewards = [] 
@@ -193,50 +193,6 @@ class Agent:
         plt.plot(self.rewards)
         plt.xlabel('episode')
         plt.ylabel('reward per episode')
-            
-            
-#        rms = RMSprop()
-#        self.model.compile(loss='mse', optimizer=rms)
-#        
-#        gamma = 0.9 #since it may take several moves to goal, making gamma high
-#        epsilon = 1
-#        for i in range(episodes):
-#            self.env.init_grid()
-#            state = self.env.state['state']
-#
-#            #while game still in progress
-#            while True:
-#                #We are in state S
-#                #Let's run our Q function on S to get Q values for all possible actions
-#                qval = self.model.predict(state.reshape(1,input_size), batch_size=1)
-#                if (random.random() < epsilon): #choose random action
-#                    action = np.random.randint(0,4)
-#                else: #choose best action from Q(s,a) values
-#                    action = (np.argmax(qval))
-#                #Take action, observe new state S' and reward
-#                new_state, reward, done = self.env.step(action)
-#                new_state = new_state['state']
-#                #Get max_Q(S',a)
-#                newQ = self.model.predict(new_state.reshape(1,64), batch_size=1)
-#                maxQ = np.max(newQ)
-#                y = np.zeros((1,4))
-#                y[:] = qval[:]
-#                if not done: #non-terminal state
-#                    update = (reward + (gamma * maxQ))
-#                else: #terminal state
-#                    update = reward
-#                y[0][action] = update #target output
-#                
-#                history = self.model.fit(state.reshape(1,64), y, batch_size=1, epochs=1, verbose=0)
-#                loss = history.history['loss'][0]
-#                print('\r', end='')
-#                print("Game: {}  Loss: {}".format(i, loss), end='')
-#                state = new_state
-#                if done:
-#                    break
-#                clear_output(wait=True)
-#            if epsilon > 0.1:
-#                epsilon -= (1/episodes)
     
     def play_episode(self):
         self.env.init_grid()
@@ -260,9 +216,11 @@ class Agent:
             if (i > 20):
                 print("Game lost; too many moves.")
                 break
-            
-env = Environment()
-ag = Agent(env)
-ag.train_nn(200)
-ag.play_episode()
+
+if __name__=="__main__":         
+    env = Environment()
+    ag = Agent(env)
+    ag.train_nn(1000)
+    ag.play_episode()
+    ag.plot_learning_curve()
 
