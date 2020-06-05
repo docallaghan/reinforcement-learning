@@ -47,11 +47,20 @@ class Environment:
         self.goal_loc = goal_loc
 
     def init_item_locations(self):
-        agent_loc = (0, 1)
         wall_loc = (2, 2)
         pit_loc = (1, 1)
         goal_loc = (3, 3)
+        #agent_loc = (0,1)
+        agent_loc = self.get_random_pair()
+        while True:
+            if agent_loc not in [wall_loc, pit_loc, goal_loc]:
+                break
+            agent_loc = self.get_random_pair()
         return agent_loc, wall_loc, pit_loc, goal_loc
+    
+    def get_random_pair(self):
+        return (np.random.randint(0, GRID_ROWS),
+                np.random.randint(0, GRID_COLS))
     
     def reset(self):
         self.init_grid()
@@ -128,8 +137,8 @@ class Agent:
         
         self.alpha = 0.1 # Learning Rate
         self.gamma = 0.95 # Discount
-        #self.eps0 = 1.0 # Epsilon greedy init
-        self.eps0 = 0.05 # Epsilon greedy init
+        self.eps0 = 1.0 # Epsilon greedy init
+        #self.eps0 = 0.05 # Epsilon greedy init
         
         self.batch_size = 32
         self.replay_memory = deque(maxlen=2000)
@@ -160,19 +169,26 @@ class Agent:
         return states, actions, rewards, next_states, dones
     
     def training_step(self):
+        # Sample a batch of S A R S' from replay memory
         experiences = self.sample_experiences()
         states, actions, rewards, next_states, dones = experiences
+        
+        # Compute target Q values from 'next_states'
         next_Q_values = self.model.predict(next_states)
         max_next_Q_values = np.max(next_Q_values, axis=1)
         target_Q_values = (rewards +
                        (1 - dones) * self.gamma * max_next_Q_values)
-        target_Q_values = target_Q_values.reshape(-1, 1)
+        target_Q_values = target_Q_values.reshape(-1, 1) # Make column vector
+        
+        # Mask to only consider action taken
         mask = tf.one_hot(actions, 4) # 4 actions
+        # Compute loss and gradient for predictions on 'states'
         with tf.GradientTape() as tape:
             all_Q_values = self.model(states)
             Q_values = tf.reduce_sum(all_Q_values * mask, axis=1, keepdims=True)
             loss = tf.reduce_mean(self.loss_fn(target_Q_values, Q_values))
         grads = tape.gradient(loss, self.model.trainable_variables)
+        # Apply gradients
         self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
         
     def train_nn(self, episodes, max_steps=20):
@@ -195,8 +211,8 @@ class Agent:
             
             episode_reward = 0
             for step in range(max_steps):
-                #eps = max(self.eps0 - episode / 500, 0.01) # decay epsilon
-                eps = self.eps0
+                eps = max(self.eps0 - episode / 500, 0.01) # decay epsilon
+                #eps = self.eps0
                 obs, reward, done = self.play_one_step(obs, eps)
                 episode_reward += reward
                 if done:
@@ -212,7 +228,11 @@ class Agent:
         self.model.set_weights(best_weights)
             
     def plot_learning_curve(self):
-        plt.plot(self.rewards)
+        y = np.array(self.rewards).reshape((-1,1))
+        x = np.arange(1, len(y) + 1).reshape((-1,1))
+        data = np.concatenate((x,y), axis=1)
+        np.savetxt('rewards1.csv', data, delimiter=",")
+        plt.plot(x, y)
         plt.xlabel('episode')
         plt.ylabel('reward per episode')
     
@@ -238,9 +258,13 @@ class Agent:
                 print("Game lost; too many moves.")
                 break
 
-if __name__=="__main__":         
+if __name__=="__main__":
+    np.random.seed(42)
+    tf.random.set_seed(42)
+    
     env = Environment()
     ag = Agent(env)
+    
     ag.train_nn(1000)
     ag.play_episode()
     ag.plot_learning_curve()
