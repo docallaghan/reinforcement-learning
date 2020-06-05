@@ -5,6 +5,7 @@ Created on Wed Jun  3 09:21:34 2020
 Author: David O'Callaghan
 """
 import numpy as np
+import random
 
 import tensorflow as tf
 from tensorflow import keras
@@ -29,6 +30,8 @@ class Environment:
     actions = [[-1,0],[1,0],[0,-1],[0,1]]
     
     def __init__(self):
+        self.cell_locs = [(i,j) for i in range(GRID_ROWS) 
+                          for j in range(GRID_COLS)]
         self.init_grid()
 
     def init_grid(self):
@@ -47,15 +50,8 @@ class Environment:
         self.goal_loc = goal_loc
 
     def init_item_locations(self):
-        wall_loc = (2, 2)
-        pit_loc = (1, 1)
-        goal_loc = (3, 3)
-        #agent_loc = (0,1)
-        agent_loc = self.get_random_pair()
-        while True:
-            if agent_loc not in [wall_loc, pit_loc, goal_loc]:
-                break
-            agent_loc = self.get_random_pair()
+        agent_loc, wall_loc, pit_loc, goal_loc = random.sample(self.cell_locs, 
+                                                               k=4)
         return agent_loc, wall_loc, pit_loc, goal_loc
     
     def get_random_pair(self):
@@ -143,7 +139,7 @@ class Agent:
         self.batch_size = 32
         self.replay_memory = deque(maxlen=2000)
         
-        self.input_size = 8#GRID_ROWS*GRID_COLS*N_CHANNELS
+        self.input_size = 8 #GRID_ROWS*GRID_COLS*N_CHANNELS
     
     def epsilon_greedy_policy(self, state, epsilon):
         if np.random.rand() < epsilon:
@@ -161,7 +157,8 @@ class Agent:
         return next_state, reward, done
     
     def sample_experiences(self):
-        indices = np.random.randint(len(self.replay_memory), size=self.batch_size)
+        indices = np.random.randint(len(self.replay_memory), 
+                                    size=self.batch_size)
         batch = [self.replay_memory[index] for index in indices]
         states, actions, rewards, next_states, dones = [
                 np.array([experience[field_index] for experience in batch])
@@ -185,23 +182,29 @@ class Agent:
         # Compute loss and gradient for predictions on 'states'
         with tf.GradientTape() as tape:
             all_Q_values = self.model(states)
-            Q_values = tf.reduce_sum(all_Q_values * mask, axis=1, keepdims=True)
+            Q_values = tf.reduce_sum(all_Q_values * mask, axis=1, 
+                                     keepdims=True)
             loss = tf.reduce_mean(self.loss_fn(target_Q_values, Q_values))
         grads = tape.gradient(loss, self.model.trainable_variables)
         # Apply gradients
-        self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
+        self.optimizer.apply_gradients(zip(grads, 
+                                           self.model.trainable_variables))
         
     def train_nn(self, episodes, max_steps=20):
 
         self.model = keras.Sequential([
-                keras.layers.Dense(32, input_shape=(self.input_size,), activation='relu'),
+                keras.layers.Dense(32, input_shape=(self.input_size,), 
+                                   activation='relu'),
                 keras.layers.Dense(32, activation='relu'),
                 keras.layers.Dense(4)
                 ])
         self.rewards = [] 
         self.optimizer = keras.optimizers.Adam(lr=1e-2)
         self.loss_fn = keras.losses.mean_squared_error
+        
         best_reward = -1000
+        n_rewards = 10
+        reward_list = deque([best_reward for _ in range(n_rewards)], maxlen=n_rewards)
         for episode in range(episodes):
             # Get flattened initial state
             #self.env.init_grid()
@@ -217,13 +220,18 @@ class Agent:
                 episode_reward += reward
                 if done:
                     break
-            if episode_reward > best_reward:
-                best_weights = self.model.get_weights()
-                best_reward = episode_reward
+                
             self.rewards.append(episode_reward)
-            print("\rEpisode: {}, Reward: {}, eps: {:.3f}".format(episode, episode_reward, eps), end="")
+            reward_list.append(episode_reward)
+            avg_reward = sum(reward_list) / n_rewards
+            if avg_reward > best_reward:
+                best_weights = self.model.get_weights()
+                best_reward = avg_reward
             
-            if episode > 30: # Wait for buffer to fill up a bit
+            print("\rEpisode: {}, Reward: {}, Avg Reward {}, eps: {:.3f}".format(
+                episode, episode_reward, avg_reward, eps), end="")
+            
+            if episode > 50: # Wait for buffer to fill up a bit
                 self.training_step()
         self.model.set_weights(best_weights)
             
@@ -253,8 +261,8 @@ class Agent:
             if done:
                 print("Reward: %s" % (reward,))
                 break
-            i += 1 #If we're taking more than 10 actions, just stop, we probably can't win this game
-            if (i > 50):
+            i += 1
+            if (i > 20):
                 print("Game lost; too many moves.")
                 break
 
