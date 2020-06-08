@@ -17,6 +17,10 @@ from datetime import datetime # Used for timing script
 
 
 DEBUG = False
+IMAGE = True
+SEED = 42
+
+TRAINING_EPISODES = 2000
 
 GRID_ROWS = 8
 GRID_COLS = 8
@@ -113,17 +117,21 @@ class ItemGatheringGridworld:
         subsequent set of 3 elements are the item x, y coords and whether the
         items has is still present.
         """
-        state = []
-        for elem in self.agent_loc:
-            state.append(elem)
-        
-        for items, colour in zip([self.red_items, self.green_items, self.yellow_items],
-                                [self.red, self.green, self.yellow]):
-            for item in items:
-                for elem in item: # (x, y, item-present)
-                    state.append(elem)
-                
-        return np.array(state)
+        if IMAGE:
+            state = self.grid.copy()
+        else:
+            state = []
+            for elem in self.agent_loc:
+                state.append(elem)
+            
+            for items, colour in zip([self.red_items, self.green_items, self.yellow_items],
+                                    [self.red, self.green, self.yellow]):
+                for item in items:
+                    for elem in item: # (x, y, item-present)
+                        state.append(elem)
+            state = np.array(state)
+
+        return state
     
     def step(self, action):
         """
@@ -183,7 +191,11 @@ class ItemGatheringGridworld:
         Checks if the max number of states has been exceeded. Retruns True if
         it has and False otherwise.
         """
-        return self.n_steps >= 50
+        all_items_collected = not any([item[2] for item in (
+            *self.red_items, *self.green_items, *self.yellow_items)])
+
+            
+        return self.n_steps >= 50 or all_items_collected
     
     def __initialise_grid_display(self, boundaries):
         """
@@ -232,12 +244,15 @@ class DQNAgent:
         self.alpha = 0.1 # Learning Rate
         self.gamma = 0.95 # Discount
         self.eps0 = 1.0 # Epsilon greedy init
-        self.eps0 = 0.1 # Epsilon greedy init
+        #self.eps0 = 0.1 # Epsilon greedy init
         
-        self.batch_size = 32
+        self.batch_size = 64
         self.replay_memory = deque(maxlen=2000)
         
-        self.input_size = len(self.env.get_current_state()) 
+        if IMAGE:
+            self.input_size = item_env.get_current_state().shape
+        else:
+            self.input_size = len(self.env.get_current_state()) 
     
     def epsilon_greedy_policy(self, state, epsilon):
         """
@@ -257,7 +272,7 @@ class DQNAgent:
         action = self.epsilon_greedy_policy(state, epsilon)
         
         next_state, reward, done = self.env.step(action)
-        next_state = next_state.reshape((self.input_size,))
+        #next_state = next_state.reshape((self.input_size,))
         self.replay_memory.append((state, action, reward, next_state, done))
         return next_state, reward, done
     
@@ -305,14 +320,27 @@ class DQNAgent:
         """
         Construct the DQN model.
         """
-        self.model = keras.Sequential([
-                keras.layers.Dense(64, input_shape=(self.input_size,), 
-                                   activation='relu'),
+
+        if IMAGE:
+            self.model = keras.Sequential([
+                keras.layers.Conv2D(8, (3, 3), activation='relu', input_shape=self.env.grid.shape),
+                #keras.layers.MaxPooling2D((2, 2)),
+                keras.layers.Conv2D(16, (3, 3), activation='relu'),
+                #keras.layers.MaxPooling2D((2, 2)),
+                keras.layers.Flatten(),
                 keras.layers.Dense(32, activation='relu'),
                 keras.layers.Dense(4)
                 ])
+        else:
+            self.model = keras.Sequential([
+                keras.layers.Dense(128, input_shape=(self.input_size,), 
+                                   activation='relu'),
+                keras.layers.Dense(64, activation='relu'),
+                keras.layers.Dense(4)
+                ])
 
-        self.optimizer = keras.optimizers.Adam(lr=1e-2)
+
+        self.optimizer = keras.optimizers.Adam(lr=1e-3)
         self.loss_fn = keras.losses.mean_squared_error
         
     def train_nn(self, episodes):
@@ -330,11 +358,11 @@ class DQNAgent:
             #self.env.init_grid()
             #obs = self.env.state['state'].copy()
             obs = self.env.reset()
-            obs = obs.reshape((self.input_size,))
+            #obs = obs.reshape((self.input_size,))
             
             episode_reward = 0
             while True:
-                eps = max(self.eps0 - episode / 500, 0.05) # decay epsilon
+                eps = max(self.eps0 - episode / 1000, 0.05) # decay epsilon
                 #eps = self.eps0
                 obs, reward, done = self.play_one_step(obs, eps)
                 episode_reward += reward
@@ -393,8 +421,8 @@ class DQNAgent:
             
 
 if __name__ == '__main__':
-    np.random.seed(42)
-    tf.random.set_seed(42)
+    np.random.seed(SEED)
+    tf.random.set_seed(SEED)
     
     # For timing the script
     start_time = datetime.now()
@@ -406,7 +434,7 @@ if __name__ == '__main__':
     dqn_ag = DQNAgent(item_env)
     
     # Train agent
-    dqn_ag.train_nn(2000)
+    dqn_ag.train_nn(TRAINING_EPISODES)
     dqn_ag.plot_learning_curve()
     
     # Play episode with learned DQN
