@@ -20,7 +20,12 @@ DEBUG = False
 IMAGE = True
 SEED = 42
 
-TRAINING_EPISODES = 2000
+PATH_ID = '001'
+IMAGE_PATH = f'plots/reward_plot_{PATH_ID}.png'
+CSV_PATH = f'plots/reward_data_{PATH_ID}.csv'
+MODEL_PATH = f'models/dqn_model_{PATH_ID}.h5'
+
+TRAINING_EPISODES = 3000
 
 GRID_ROWS = 8
 GRID_COLS = 8
@@ -382,19 +387,23 @@ class DQNAgent:
             if episode > 50: # Wait for buffer to fill up a bit
                 self.training_step()
         self.model.set_weights(best_weights)
+        self.model.save(MODEL_PATH)
             
-    def plot_learning_curve(self):
+    def plot_learning_curve(self, image_path=None, csv_path=None):
         """
         Plot the rewards per episode collected during training
         """
-        _, ax = plt.subplots()
+        fig, ax = plt.subplots()
         y = np.array(self.rewards).reshape((-1,1))
         x = np.arange(1, len(y) + 1).reshape((-1,1))
-        data = np.concatenate((x,y), axis=1)
-        np.savetxt('rewards2.csv', data, delimiter=",")
+        if csv_path:
+            data = np.concatenate((x,y), axis=1)
+            np.savetxt(csv_path, data, delimiter=",")
         ax.plot(x, y)
         ax.set_xlabel('episode')
-        ax.set_ylabel('reward per episode')   
+        ax.set_ylabel('reward per episode')
+        if image_path:
+            fig.savefig(image_path)
     
     def play_episode(self):
         """
@@ -435,7 +444,8 @@ if __name__ == '__main__':
     
     # Train agent
     dqn_ag.train_nn(TRAINING_EPISODES)
-    dqn_ag.plot_learning_curve()
+    dqn_ag.plot_learning_curve(image_path=IMAGE_PATH, 
+                               csv_path=CSV_PATH)
     
     # Play episode with learned DQN
     dqn_ag.play_episode()

@@ -1,0 +1,29 @@
+---
+title: "GridWorld Reward Plot"
+author: "David O'Callaghan"
+date: "6/5/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+```{r}
+data <- read_csv('rewards2.csv', col_names = c('episode', 'reward'))
+data
+```
+```{r}
+ggplot(data, aes(x=episode, y=reward)) +
+  geom_line(alpha=0.2, colour="steelblue3") +
+  geom_smooth(method="loess", span=0.2, na.rm=TRUE, se=FALSE, colour="steelblue3") +
+  theme_minimal() +
+  theme(
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()
+  )
+```
+
+
