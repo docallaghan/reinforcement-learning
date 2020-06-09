@@ -20,12 +20,12 @@ DEBUG = False
 IMAGE = True
 SEED = 42
 
-PATH_ID = '001'
+PATH_ID = '002'
 IMAGE_PATH = f'plots/reward_plot_{PATH_ID}.png'
 CSV_PATH = f'plots/reward_data_{PATH_ID}.csv'
 MODEL_PATH = f'models/dqn_model_{PATH_ID}.h5'
 
-TRAINING_EPISODES = 3000
+TRAINING_EPISODES = 5000
 
 GRID_ROWS = 8
 GRID_COLS = 8
@@ -149,8 +149,8 @@ class ItemGatheringGridworld:
     
 
         # Check if outside grid
-        if ((cand_loc[0] <= GRID_ROWS-1 and cand_loc[0] >= 0) and
-            (cand_loc[1] <= GRID_COLS-1 and cand_loc[1] >= 0)):
+        if ((cand_loc[0] <= self.grid_rows-1 and cand_loc[0] >= 0) and
+            (cand_loc[1] <= self.grid_cols-1 and cand_loc[1] >= 0)):
               
             # Erase old location
             self.grid[self.agent_loc] = np.zeros(3)
@@ -255,7 +255,7 @@ class DQNAgent:
         self.replay_memory = deque(maxlen=2000)
         
         if IMAGE:
-            self.input_size = item_env.get_current_state().shape
+            self.input_size = self.env.get_current_state().shape
         else:
             self.input_size = len(self.env.get_current_state()) 
     
@@ -329,9 +329,9 @@ class DQNAgent:
         if IMAGE:
             self.model = keras.Sequential([
                 keras.layers.Conv2D(8, (3, 3), activation='relu', input_shape=self.env.grid.shape),
-                #keras.layers.MaxPooling2D((2, 2)),
+                keras.layers.Dropout(0.2),
                 keras.layers.Conv2D(16, (3, 3), activation='relu'),
-                #keras.layers.MaxPooling2D((2, 2)),
+                keras.layers.Dropout(0.2),
                 keras.layers.Flatten(),
                 keras.layers.Dense(32, activation='relu'),
                 keras.layers.Dense(4)
@@ -348,7 +348,7 @@ class DQNAgent:
         self.optimizer = keras.optimizers.Adam(lr=1e-3)
         self.loss_fn = keras.losses.mean_squared_error
         
-    def train_nn(self, episodes):
+    def train_model(self, episodes):
         """
         Train the network over a range of episodes.
         """
@@ -367,7 +367,7 @@ class DQNAgent:
             
             episode_reward = 0
             while True:
-                eps = max(self.eps0 - episode / 1000, 0.05) # decay epsilon
+                eps = max(self.eps0 - episode / 2000, 0.05) # decay epsilon
                 #eps = self.eps0
                 obs, reward, done = self.play_one_step(obs, eps)
                 episode_reward += reward
@@ -388,6 +388,9 @@ class DQNAgent:
                 self.training_step()
         self.model.set_weights(best_weights)
         self.model.save(MODEL_PATH)
+    
+    def load_model(self, path):
+        self.model = keras.models.load_model(path)
             
     def plot_learning_curve(self, image_path=None, csv_path=None):
         """
@@ -412,7 +415,7 @@ class DQNAgent:
         state = self.env.reset()
     
         print("Initial State:")
-        self.env.show()
+        self.env.show(boundaries=True)
         i = 0
         rewards = 0
         while True:
@@ -423,7 +426,7 @@ class DQNAgent:
             print('Move #: %s; Taking action: %s' % (i, action))
             state, reward, done = self.env.step(action)
             rewards += reward
-            self.env.show()
+            self.env.show(boundaries=True)
             if done:
                 print("Reward: %s" % (rewards,))
                 break
@@ -432,6 +435,7 @@ class DQNAgent:
 if __name__ == '__main__':
     np.random.seed(SEED)
     tf.random.set_seed(SEED)
+    random.seed(SEED)
     
     # For timing the script
     start_time = datetime.now()
@@ -443,7 +447,7 @@ if __name__ == '__main__':
     dqn_ag = DQNAgent(item_env)
     
     # Train agent
-    dqn_ag.train_nn(TRAINING_EPISODES)
+    dqn_ag.train_model(TRAINING_EPISODES)
     dqn_ag.plot_learning_curve(image_path=IMAGE_PATH, 
                                csv_path=CSV_PATH)
     
