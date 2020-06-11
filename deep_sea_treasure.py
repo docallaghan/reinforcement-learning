@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """
 Created on Tue Jun  9 09:53:15 2020
-
 Author: David O'Callaghan
 """
 
@@ -125,7 +124,7 @@ class Agent:
         gamma = 1
 
         self.stats_dict = {}
-        for weights in self.weights_gen(11):
+        for weights in self.weights_gen(101):
             self.Q_values = self.initialise_q_values()
             stats = []
             for i in range(episodes):
@@ -151,7 +150,7 @@ class Agent:
                 stats.append([i, rs])
             key = tuple(np.round(weights, 4))
             self.stats_dict[key] = [np.array(stats), self.Q_values.copy()]
-            self.plot_learning_curve(self.stats_dict[key][0], key)
+            #self.plot_learning_curve(self.stats_dict[key][0], key)
         
         with open('dst_results.pkl', 'wb') as f:
             pickle.dump(self.stats_dict, f)
@@ -172,4 +171,3 @@ if __name__ == '__main__':
     ag = Agent(dst_env)
     ag.q_learning(4000)
     #ag.plot_learning_curve()
-    
