@@ -197,14 +197,65 @@ if __name__ == "__main__":
             ])
 
     rms = RMSprop()
-    model.compile(loss='mse', optimizer=rms)
+#    model.compile(loss='mse', optimizer=rms)
+#    
+#    epochs = 1000
+#    gamma = 0.9 #since it may take several moves to goal, making gamma high
+#    epsilon = 1
+#    for i in range(epochs):
+#        
+#        state = init_grid()
+#        status = 1
+#        #while game still in progress
+#        while(status == 1):
+#            #We are in state S
+#            #Let's run our Q function on S to get Q values for all possible actions
+#            qval = model.predict(state.reshape(1,64), batch_size=1)
+#            if (random.random() < epsilon): #choose random action
+#                action = np.random.randint(0,4)
+#            else: #choose best action from Q(s,a) values
+#                action = (np.argmax(qval))
+#            #Take action, observe new state S'
+#            new_state = make_move(state, action)
+#            #Observe reward
+#            reward = get_reward(new_state)
+#            #Get max_Q(S',a)
+#            newQ = model.predict(new_state.reshape(1,64), batch_size=1)
+#            maxQ = np.max(newQ)
+#            y = np.zeros((1,4))
+#            y[:] = qval[:]
+#            if reward == -1: #non-terminal state
+#                update = (reward + (gamma * maxQ))
+#            else: #terminal state
+#                update = reward
+#            y[0][action] = update #target output
+#            
+#            history = model.fit(state.reshape(1,64), y, batch_size=1, epochs=1, verbose=0)
+#            loss = history.history['loss'][0]
+#            print('\r', end='')
+#            print("Game: {}  Loss: {}".format(i, loss), end='')
+#            state = new_state
+#            if reward != -1:
+#                status = 0
+#            clear_output(wait=True)
+#        if epsilon > 0.1:
+#            epsilon -= (1/epochs)
+#    
+#    testAlgo(init=0)
     
-    epochs = 1000
-    gamma = 0.9 #since it may take several moves to goal, making gamma high
+    
+    model.compile(loss='mse', optimizer=rms)#reset weights of neural network
+    epochs = 3000
+    gamma = 0.975
     epsilon = 1
+    batchSize = 40
+    buffer = 80
+    replay = []
+    #stores tuples of (S, A, R, S')
+    h = 0
     for i in range(epochs):
         
-        state = init_grid()
+        state = init_grid_player() #using the harder state initialization function
         status = 1
         #while game still in progress
         while(status == 1):
@@ -219,28 +270,45 @@ if __name__ == "__main__":
             new_state = make_move(state, action)
             #Observe reward
             reward = get_reward(new_state)
-            #Get max_Q(S',a)
-            newQ = model.predict(new_state.reshape(1,64), batch_size=1)
-            maxQ = np.max(newQ)
-            y = np.zeros((1,4))
-            y[:] = qval[:]
-            if reward == -1: #non-terminal state
-                update = (reward + (gamma * maxQ))
-            else: #terminal state
-                update = reward
-            y[0][action] = update #target output
             
-            history = model.fit(state.reshape(1,64), y, batch_size=1, epochs=1, verbose=0)
-            loss = history.history['loss'][0]
-            print('\r', end='')
-            print("Game: {}  Loss: {}".format(i, loss), end='')
-            state = new_state
-            if reward != -1:
+            #Experience replay storage
+            if (len(replay) < buffer): #if buffer not filled, add to it
+                replay.append((state, action, reward, new_state))
+            else: #if buffer full, overwrite old values
+                if (h < (buffer-1)):
+                    h += 1
+                else:
+                    h = 0
+                replay[h] = (state, action, reward, new_state)
+                #randomly sample our experience replay memory
+                minibatch = random.sample(replay, batchSize)
+                X_train = []
+                y_train = []
+                for memory in minibatch:
+                    #Get max_Q(S',a)
+                    old_state, action, reward, new_state = memory
+                    old_qval = model.predict(old_state.reshape(1,64), batch_size=1)
+                    newQ = model.predict(new_state.reshape(1,64), batch_size=1)
+                    maxQ = np.max(newQ)
+                    y = np.zeros((1,4))
+                    y[:] = old_qval[:]
+                    if reward == -1: #non-terminal state
+                        update = (reward + (gamma * maxQ))
+                    else: #terminal state
+                        update = reward
+                    y[0][action] = update
+                    X_train.append(old_state.reshape(64,))
+                    y_train.append(y.reshape(4,))
+                
+                X_train = np.array(X_train)
+                y_train = np.array(y_train)
+                print("Game #: %s" % (i,))
+                model.fit(X_train, y_train, batch_size=batchSize, epochs=1, verbose=2)
+                state = new_state
+            if reward != -1: #if reached terminal state, update game status
                 status = 0
             clear_output(wait=True)
-        if epsilon > 0.1:
+        if epsilon > 0.1: #decrement epsilon over time
             epsilon -= (1/epochs)
-    
-    testAlgo(init=0)
     
     
