@@ -11,9 +11,10 @@ library(tidyverse)
 ```
 
 ```{r}
-data <- read_csv('rewards2.csv', col_names = c('episode', 'reward'))
+data <- read_csv('reward_data_002.csv', col_names = c('episode', 'reward'))
 data
 ```
+
 ```{r}
 ggplot(data, aes(x=episode, y=reward)) +
   geom_line(alpha=0.2, colour="steelblue3") +
