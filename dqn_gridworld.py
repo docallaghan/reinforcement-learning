@@ -190,18 +190,21 @@ class Agent:
         self.optimizer.apply_gradients(zip(grads, 
                                            self.model.trainable_variables))
         
-    def train_nn(self, episodes, max_steps=20):
-
+    def build_model(self):
         self.model = keras.Sequential([
                 keras.layers.Dense(32, input_shape=(self.input_size,), 
                                    activation='relu'),
                 keras.layers.Dense(32, activation='relu'),
                 keras.layers.Dense(4)
                 ])
-        self.rewards = [] 
+
         self.optimizer = keras.optimizers.Adam(lr=1e-2)
         self.loss_fn = keras.losses.mean_squared_error
         
+    def train_nn(self, episodes, max_steps=20):
+        self.build_model()
+        
+        self.rewards = [] 
         best_reward = -1000
         n_rewards = 10
         reward_list = deque([best_reward for _ in range(n_rewards)], maxlen=n_rewards)
