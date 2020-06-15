@@ -16,16 +16,25 @@ from collections import deque # Used for replay buffer and reward tracking
 from datetime import datetime # Used for timing script
 
 
-DEBUG = False
+DEBUG = True
 IMAGE = True
 SEED = 42
 
-PATH_ID = '002'
+PATH_ID = '003'
 IMAGE_PATH = f'plots/reward_plot_{PATH_ID}.png'
 CSV_PATH = f'plots/reward_data_{PATH_ID}.csv'
 MODEL_PATH = f'models/dqn_model_{PATH_ID}.h5'
 
-TRAINING_EPISODES = 5000
+REPLAY_MEMORY_SIZE = 3000
+BATCH_SIZE = 64
+
+EPSILON_DECAY = 1 / 2000
+EPSILON_END = 0.05
+
+TRAINING_EPISODES = 3000
+COPY_TO_TARGET_EVERY = 1000 # Steps
+START_TRAINING_AFTER = 50 # Episodes
+MEAN_REWARD_EVERY = 10 # Episodes
 
 GRID_ROWS = 8
 GRID_COLS = 8
@@ -34,10 +43,10 @@ NUM_RED = 3
 NUM_GREEN = 3
 NUM_YELLOW = 2
 
-RED_REWARD = 10
-GREEN_REWARD = 11
-YELLOW_REWARD = 12
-TRANSITION_REWARD = -1
+RED_REWARD = 1
+GREEN_REWARD = 1
+YELLOW_REWARD = 1
+TRANSITION_REWARD = -0.05
 
 
 class ItemGatheringGridworld:
@@ -68,7 +77,6 @@ class ItemGatheringGridworld:
         
         # Stores axis object later
         self.ax = None
-        
         
     def inititialise_grid(self):
         """
@@ -171,22 +179,22 @@ class ItemGatheringGridworld:
         for i, item in enumerate(self.red_items):
             if self.agent_loc == (item[0], item[1]) and item[2] == 1:
                 self.red_items[i] = (item[0], item[1], 0)
-                if DEBUG:
-                    print("Picked up red!")
+                # if DEBUG:
+                #     print("Picked up red!")
                 return RED_REWARD
             
         for i, item in enumerate(self.green_items):
             if self.agent_loc == (item[0], item[1]) and item[2] == 1:
                 self.green_items[i] = (item[0], item[1], 0)
-                if DEBUG:
-                    print("Picked up green!")
+                # if DEBUG:
+                #     print("Picked up green!")
                 return GREEN_REWARD
             
         for i, item in enumerate(self.yellow_items):
             if self.agent_loc == (item[0], item[1]) and item[2] == 1:
                 self.yellow_items[i] = (item[0], item[1], 0)
-                if DEBUG:
-                    print("Picked up yellow!")
+                # if DEBUG:
+                #     print("Picked up yellow!")
                 return YELLOW_REWARD
         
         return TRANSITION_REWARD
@@ -240,24 +248,109 @@ class ItemGatheringGridworld:
         plt.pause(0.05)
 
 
+class ReplayMemory(deque):
+    """
+    Inherits from the 'deque' class to add a method called 'sample' for 
+    sampling batches from the deque.
+    """
+    def sample(self, batch_size):
+        """
+        Sample a minibatch from the replay buffer.
+        """
+        # Random sample of indices
+        indices = np.random.randint(len(self), 
+                                    size=batch_size)
+        # Filter the batch from the deque
+        batch = [self[index] for index in indices]
+        # Unpach and create numpy arrays for each element type in the batch
+        states, actions, rewards, next_states, dones = [
+                np.array([experience[field_index] for experience in batch])
+                for field_index in range(5)]
+        return states, actions, rewards, next_states, dones
+
+
+class RewardTracker:
+    """
+    Class for tracking mean rewards and storing all episode rewards for
+    analysis.
+    """
+    def __init__(self, maxlen):
+        self.moving_average = deque([-np.inf for _ in range(maxlen)], 
+                                    maxlen=maxlen)
+        self.maxlen = maxlen
+        self.epsiode_rewards = []
+        
+    def __repr__(self):
+        # For printing
+        return self.moving_average.__repr__()
+        
+    def append(self, reward):
+        self.moving_average.append(reward)
+        self.epsiode_rewards.append(reward)
+        
+    def mean(self):
+        return sum(self.moving_average) / self.maxlen
+    
+    def get_reward_data(self):
+        episodes = np.array(
+            [i for i in range(len(self.epsiode_rewards))]).reshape(-1,1)
+        
+        rewards = np.array(self.epsiode_rewards).reshape(-1,1)
+        return np.concatenate((episodes, rewards), axis=1)
+
+
 class DQNAgent:
     
-    def __init__(self, env):
+    def __init__(self, env, replay_memory):
         self.env = env
         self.actions = [i for i in range(len(env.actions))] 
         
-        self.alpha = 0.1 # Learning Rate
         self.gamma = 0.95 # Discount
         self.eps0 = 1.0 # Epsilon greedy init
-        #self.eps0 = 0.1 # Epsilon greedy init
         
-        self.batch_size = 64
-        self.replay_memory = deque(maxlen=2000)
+        self.batch_size = BATCH_SIZE
+        self.replay_memory = replay_memory
         
         if IMAGE:
             self.input_size = self.env.get_current_state().shape
         else:
             self.input_size = len(self.env.get_current_state()) 
+        
+        # Build both models
+        self.model = self.build_model()
+        self.target_model = self.build_model()
+        # Make weights the same
+        self.target_model.set_weights(self.model.get_weights())
+        
+    def build_model(self):
+        """
+        Construct the DQN model.
+        """
+
+        if IMAGE:
+            model = keras.Sequential([
+                keras.layers.Conv2D(8, (3, 3), activation='relu', input_shape=self.env.grid.shape),
+                keras.layers.Dropout(0.2),
+                keras.layers.Conv2D(16, (3, 3), activation='relu'),
+                keras.layers.Dropout(0.2),
+                keras.layers.Flatten(),
+                keras.layers.Dense(32, activation='relu'),
+                keras.layers.Dense(4)
+                ])
+        else:
+            model = keras.Sequential([
+                keras.layers.Dense(128, input_shape=(self.input_size,), 
+                                   activation='relu'),
+                keras.layers.Dense(64, activation='relu'),
+                keras.layers.Dense(4)
+                ])
+
+        self.optimizer = keras.optimizers.Adam(lr=1e-3)
+        self.loss_fn = keras.losses.mean_squared_error
+        
+        #model.compile(loss=loss, optimizer=optimizer, metrics=['accuracy'])
+        
+        return model
     
     def epsilon_greedy_policy(self, state, epsilon):
         """
@@ -277,32 +370,19 @@ class DQNAgent:
         action = self.epsilon_greedy_policy(state, epsilon)
         
         next_state, reward, done = self.env.step(action)
-        #next_state = next_state.reshape((self.input_size,))
         self.replay_memory.append((state, action, reward, next_state, done))
         return next_state, reward, done
-    
-    def sample_experiences(self):
-        """
-        Sample a batch from the replay buffer.
-        """
-        indices = np.random.randint(len(self.replay_memory), 
-                                    size=self.batch_size)
-        batch = [self.replay_memory[index] for index in indices]
-        states, actions, rewards, next_states, dones = [
-                np.array([experience[field_index] for experience in batch])
-                for field_index in range(5)]
-        return states, actions, rewards, next_states, dones
     
     def training_step(self):
         """
         Train the DQN on a batch from the replay buffer.
         """
         # Sample a batch of S A R S' from replay memory
-        experiences = self.sample_experiences()
+        experiences = self.replay_memory.sample(self.batch_size)
         states, actions, rewards, next_states, dones = experiences
         
         # Compute target Q values from 'next_states'
-        next_Q_values = self.model.predict(next_states)
+        next_Q_values = self.target_model.predict(next_states)
         max_next_Q_values = np.max(next_Q_values, axis=1)
         target_Q_values = (rewards +
                        (1 - dones) * self.gamma * max_next_Q_values)
@@ -321,72 +401,48 @@ class DQNAgent:
         self.optimizer.apply_gradients(zip(grads, 
                                            self.model.trainable_variables))
         
-    def build_model(self):
-        """
-        Construct the DQN model.
-        """
-
-        if IMAGE:
-            self.model = keras.Sequential([
-                keras.layers.Conv2D(8, (3, 3), activation='relu', input_shape=self.env.grid.shape),
-                keras.layers.Dropout(0.2),
-                keras.layers.Conv2D(16, (3, 3), activation='relu'),
-                keras.layers.Dropout(0.2),
-                keras.layers.Flatten(),
-                keras.layers.Dense(32, activation='relu'),
-                keras.layers.Dense(4)
-                ])
-        else:
-            self.model = keras.Sequential([
-                keras.layers.Dense(128, input_shape=(self.input_size,), 
-                                   activation='relu'),
-                keras.layers.Dense(64, activation='relu'),
-                keras.layers.Dense(4)
-                ])
-
-
-        self.optimizer = keras.optimizers.Adam(lr=1e-3)
-        self.loss_fn = keras.losses.mean_squared_error
-        
-    def train_model(self, episodes):
+    def train_model(self, episodes, reward_tracker):
         """
         Train the network over a range of episodes.
         """
-        self.build_model()
-        
-        self.rewards = [] 
-        best_reward = -1000
-        n_rewards = 10
-        reward_list = deque([best_reward for _ in range(n_rewards)], maxlen=n_rewards)
+        best_reward = -np.inf
+        steps = 0
         for episode in range(episodes):
-            # Get flattened initial state
-            #self.env.init_grid()
-            #obs = self.env.state['state'].copy()
-            obs = self.env.reset()
-            #obs = obs.reshape((self.input_size,))
+            # Decay epsilon
+            eps = max(self.eps0 - episode * EPSILON_DECAY, EPSILON_END)
+            
+            # Reset env
+            state = self.env.reset()
             
             episode_reward = 0
             while True:
-                eps = max(self.eps0 - episode / 2000, 0.05) # decay epsilon
+                
                 #eps = self.eps0
-                obs, reward, done = self.play_one_step(obs, eps)
+                state, reward, done = self.play_one_step(state, eps)
+                steps += 1
                 episode_reward += reward
                 if done:
                     break
                 
-            self.rewards.append(episode_reward)
-            reward_list.append(episode_reward)
-            avg_reward = sum(reward_list) / n_rewards
+                # Copy weights from main model to target model
+                if steps % COPY_TO_TARGET_EVERY == 0:
+                    if DEBUG:
+                        print(f'\n\n{steps}: Copying to target\n\n')
+                    self.target_model.set_weights(self.model.get_weights())
+                        
+            reward_tracker.append(episode_reward)
+            avg_reward = reward_tracker.mean()
             if avg_reward > best_reward:
-                best_weights = self.model.get_weights()
+                #best_weights = self.model.get_weights()
                 best_reward = avg_reward
             
             print("\rEpisode: {}, Reward: {}, Avg Reward {}, eps: {:.3f}".format(
                 episode, episode_reward, avg_reward, eps), end="")
             
-            if episode > 50: # Wait for buffer to fill up a bit
+            if episode > START_TRAINING_AFTER: # Wait for buffer to fill up a bit
                 self.training_step()
-        self.model.set_weights(best_weights)
+        # self.model.set_weights(best_weights)
+        self.reward_data = reward_tracker.get_reward_data()
         self.model.save(MODEL_PATH)
     
     def load_model(self, path):
@@ -397,11 +453,11 @@ class DQNAgent:
         Plot the rewards per episode collected during training
         """
         fig, ax = plt.subplots()
-        y = np.array(self.rewards).reshape((-1,1))
-        x = np.arange(1, len(y) + 1).reshape((-1,1))
+        x = self.reward_data[:,0]
+        y = self.reward_data[:,1]
+        
         if csv_path:
-            data = np.concatenate((x,y), axis=1)
-            np.savetxt(csv_path, data, delimiter=",")
+            np.savetxt(csv_path, self.reward_data, delimiter=",")
         ax.plot(x, y)
         ax.set_xlabel('episode')
         ax.set_ylabel('reward per episode')
@@ -443,11 +499,17 @@ if __name__ == '__main__':
     # Instantiate environment
     item_env = ItemGatheringGridworld()
     
+    # Initialise Replay Memory
+    replay_mem = ReplayMemory(maxlen=REPLAY_MEMORY_SIZE)
+    
+    # Initialise Reward Tracker
+    reward_track = RewardTracker(maxlen=MEAN_REWARD_EVERY)
+    
     # Instantiate agent (pass in environment)
-    dqn_ag = DQNAgent(item_env)
+    dqn_ag = DQNAgent(item_env, replay_mem)
     
     # Train agent
-    dqn_ag.train_model(TRAINING_EPISODES)
+    dqn_ag.train_model(TRAINING_EPISODES, reward_track)
     dqn_ag.plot_learning_curve(image_path=IMAGE_PATH, 
                                csv_path=CSV_PATH)
     
