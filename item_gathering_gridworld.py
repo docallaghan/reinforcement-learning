@@ -16,35 +16,14 @@ from tensorflow import keras
 from collections import deque # Used for replay buffer and reward tracking
 from datetime import datetime # Used for timing script
 
-# Get arguments from command line ...
-parser = argparse.ArgumentParser()
-parser.add_argument("-i", "--ID",
-                    help="File ID for output")
-parser.add_argument("-s", "--SEED", type=int,
-                    help="Random seed")
-parser.add_argument("-e", "--EPISODES", type=int,
-                    help="Number of episodes")
-parser.add_argument("-r", "--RESTARTS", type=int,
-                    help="Number of exploaration restarts")
-args = parser.parse_args()
 
 DEBUG = True
-IMAGE = True
-SEED = args.SEED
-
-PATH_ID = args.ID
-IMAGE_PATH = f'plots/reward_plot_{PATH_ID}.png'
-CSV_PATH = f'plots/reward_data_{PATH_ID}.csv'
-MODEL_PATH = f'models/dqn_model_{PATH_ID}.h5'
+# IMAGE = True
 
 REPLAY_MEMORY_SIZE = 3000
 BATCH_SIZE = 64
 
-EPSILON_DECAY = 1 / (args.EPISODES / (args.RESTARTS + 1))
 EPSILON_END = 0.05
-
-TRAINING_EPISODES = args.EPISODES
-EXPLORATION_RESTARTS = args.RESTARTS
 
 COPY_TO_TARGET_EVERY = 1000 # Steps
 START_TRAINING_AFTER = 50 # Episodes
@@ -139,25 +118,9 @@ class ItemGatheringGridworld:
     
     def get_current_state(self):
         """
-        Gets the current state of the environment. Returns a 1D NumPy array
-        where the first 2 elements are the agent x and y locations and each
-        subsequent set of 3 elements are the item x, y coords and whether the
-        items has is still present.
+        Gets the current state of the environment.
         """
-        if IMAGE:
-            state = self.grid.copy()
-        else:
-            state = []
-            for elem in self.agent_loc:
-                state.append(elem)
-            
-            for items, colour in zip([self.red_items, self.green_items, self.yellow_items],
-                                    [self.red, self.green, self.yellow]):
-                for item in items:
-                    for elem in item: # (x, y, item-present)
-                        state.append(elem)
-            state = np.array(state)
-
+        state = self.grid.copy()
         return state
     
     def step(self, action):
@@ -181,10 +144,10 @@ class ItemGatheringGridworld:
             # Set the new location for the agent
             self.agent_loc = cand_loc
         
-        reward = self.__get_reward()
+        rewards = self.__get_reward_vector()
         state = self.get_current_state()
         done = self.check_terminal_state()
-        return state, reward, done
+        return state, rewards, done
     
     def __get_reward(self):
         """
@@ -212,6 +175,35 @@ class ItemGatheringGridworld:
                 return YELLOW_REWARD
         
         return TRANSITION_REWARD
+    
+    def __get_reward_vector(self):
+        """
+        Returns the reward after an action has been taken. Also 
+        """
+        # reward = [Green, Red, Yellow, Time] 
+        
+        for i, item in enumerate(self.green_items):
+            if self.agent_loc == (item[0], item[1]) and item[2] == 1:
+                self.green_items[i] = (item[0], item[1], 0)
+                # if DEBUG:
+                #     print("Picked up green!")
+                return [1, 0, 0, -1]
+            
+        for i, item in enumerate(self.red_items):
+            if self.agent_loc == (item[0], item[1]) and item[2] == 1:
+                self.red_items[i] = (item[0], item[1], 0)
+                # if DEBUG:
+                #     print("Picked up red!")
+                return [0, 1, 0, -1]
+             
+        for i, item in enumerate(self.yellow_items):
+            if self.agent_loc == (item[0], item[1]) and item[2] == 1:
+                self.yellow_items[i] = (item[0], item[1], 0)
+                # if DEBUG:
+                #     print("Picked up yellow!")
+                return [0, 0, 1, -1]
+        
+        return [0, 0, 0, -1]
             
     def check_terminal_state(self):
         """
@@ -277,10 +269,10 @@ class ReplayMemory(deque):
         # Filter the batch from the deque
         batch = [self[index] for index in indices]
         # Unpach and create numpy arrays for each element type in the batch
-        states, actions, rewards, next_states, dones = [
+        states, actions, rewards, next_states, dones, weightss = [
                 np.array([experience[field_index] for experience in batch])
-                for field_index in range(5)]
-        return states, actions, rewards, next_states, dones
+                for field_index in range(6)]
+        return states, actions, rewards, next_states, dones, weightss
 
 
 class RewardTracker:
@@ -313,6 +305,16 @@ class RewardTracker:
         return np.concatenate((episodes, rewards), axis=1)
 
 
+class WeightSpace:
+    def __init__(self):
+        # [Green, Red, Yellow, Time]
+        self.distribution = [np.array([10, 10, 10, 10]), # Equal preferences
+                             np.array([20, 5, 5, 10]) # Prefers green
+                             ]
+    def sample(self):
+        return np.array(random.choice(self.distribution), dtype=np.float32)
+
+
 class DQNAgent:
     
     def __init__(self, env, replay_memory):
@@ -325,10 +327,8 @@ class DQNAgent:
         self.batch_size = BATCH_SIZE
         self.replay_memory = replay_memory
         
-        if IMAGE:
-            self.input_size = self.env.get_current_state().shape
-        else:
-            self.input_size = len(self.env.get_current_state()) 
+        self.input_size = self.env.get_current_state().shape
+        self.output_size = len(self.actions)
         
         # Build both models
         self.model = self.build_model()
@@ -336,37 +336,83 @@ class DQNAgent:
         # Make weights the same
         self.target_model.set_weights(self.model.get_weights())
         
+        # Temporary
+        self.pref_weights = [np.array([10, 10, 10]), # Equal preferences
+                             np.array([20, 5, 5]) # Prefers green
+                             ]
+        
     def build_model(self):
         """
         Construct the DQN model.
         """
-
-        if IMAGE:
-            model = keras.Sequential([
-                keras.layers.Conv2D(8, (3, 3), activation='relu', input_shape=self.env.grid.shape),
-                keras.layers.Dropout(0.2),
-                keras.layers.Conv2D(16, (3, 3), activation='relu'),
-                keras.layers.Dropout(0.2),
-                keras.layers.Flatten(),
-                keras.layers.Dense(32, activation='relu'),
-                keras.layers.Dense(4)
-                ])
-        else:
-            model = keras.Sequential([
-                keras.layers.Dense(128, input_shape=(self.input_size,), 
-                                   activation='relu'),
-                keras.layers.Dense(64, activation='relu'),
-                keras.layers.Dense(4)
-                ])
-
+        # image of size 8x8 with 3 channels (RGB)
+        image_input = keras.Input(shape=self.input_size)
+        # preference weights
+        weights_input = keras.Input(shape=(4,))
+        
+        # Convolutional Layers for image
+        # - Define Layers
+        conv2d_1 = keras.layers.Conv2D(filters=8, kernel_size=(3, 3), activation='relu')
+        dropout_1 = keras.layers.Dropout(rate=0.2)
+        conv2d_2 = keras.layers.Conv2D(filters=16, kernel_size=(3, 3), activation='relu')
+        dropout_2 = keras.layers.Dropout(rate=0.2)
+        flatten = keras.layers.Flatten()
+        # - Define Architecture
+        x = conv2d_1(image_input)
+        x = dropout_1(x)
+        x = conv2d_2(x)
+        x = dropout_2(x)
+        image_output = flatten(x)
+        
+        # Dense layers for weight input concatenated with conv layers output
+        # - Define Layers
+        dense = keras.layers.Dense(32, activation='relu')
+        output = keras.layers.Dense(self.output_size)
+        # - Define Architecture
+        dense_input = keras.layers.concatenate([image_output, weights_input])
+        x = dense(dense_input)
+        outputs = output(x)  
+        
+        # Build full model
+        model = keras.Model(inputs=[image_input, weights_input], outputs=outputs)
+        
+        # Define optimizer and loss function
         self.optimizer = keras.optimizers.Adam(lr=1e-3)
         self.loss_fn = keras.losses.mean_squared_error
         
-        #model.compile(loss=loss, optimizer=optimizer, metrics=['accuracy'])
-        
         return model
+        
+    # def build_model(self):
+    #     """
+    #     Construct the DQN model.
+    #     """
+
+    #     if IMAGE:
+    #         model = keras.Sequential([
+    #             keras.layers.Conv2D(8, (3, 3), activation='relu', input_shape=self.env.grid.shape),
+    #             keras.layers.Dropout(0.2),
+    #             keras.layers.Conv2D(16, (3, 3), activation='relu'),
+    #             keras.layers.Dropout(0.2),
+    #             keras.layers.Flatten(),
+    #             keras.layers.Dense(32, activation='relu'),
+    #             keras.layers.Dense(4)
+    #             ])
+    #     else:
+    #         model = keras.Sequential([
+    #             keras.layers.Dense(128, input_shape=(self.input_size,), 
+    #                                activation='relu'),
+    #             keras.layers.Dense(64, activation='relu'),
+    #             keras.layers.Dense(4)
+    #             ])
+
+    #     self.optimizer = keras.optimizers.Adam(lr=1e-3)
+    #     self.loss_fn = keras.losses.mean_squared_error
+        
+    #     #model.compile(loss=loss, optimizer=optimizer, metrics=['accuracy'])
+        
+    #     return model
     
-    def epsilon_greedy_policy(self, state, epsilon):
+    def epsilon_greedy_policy(self, state, epsilon, weights):
         """
         Select greedy action from model output based on current state with 
         probability epsilon. With probability 1 - epsilon select random action.
@@ -374,29 +420,37 @@ class DQNAgent:
         if np.random.rand() < epsilon:
             return random.choice(self.actions)
         else:
-            Q_values = self.model.predict(state[np.newaxis])
+            Q_values = self.model.predict([state[np.newaxis], weights[np.newaxis]])
             return np.argmax(Q_values)
     
-    def play_one_step(self, state, epsilon):
+    def play_one_step(self, state, epsilon, weights):
         """
         Play one action using the DQN and store S A R S' in replay buffer.
+        Adapted from: 
+            https://github.com/ageron/handson-ml2/blob/master/18_reinforcement_learning.ipynb
+            [Accessed: 15/06/2020]
         """
-        action = self.epsilon_greedy_policy(state, epsilon)
+        action = self.epsilon_greedy_policy(state, epsilon, weights)
         
-        next_state, reward, done = self.env.step(action)
-        self.replay_memory.append((state, action, reward, next_state, done))
+        next_state, rewards, done = self.env.step(action)
+        reward = np.dot(rewards, weights) # Linear scalarisation
+        self.replay_memory.append((state, action, reward, next_state, done, weights))
         return next_state, reward, done
     
     def training_step(self):
         """
         Train the DQN on a batch from the replay buffer.
+        Adapted from: 
+            https://github.com/ageron/handson-ml2/blob/master/18_reinforcement_learning.ipynb
+            [Accessed: 15/06/2020]
         """
         # Sample a batch of S A R S' from replay memory
         experiences = self.replay_memory.sample(self.batch_size)
-        states, actions, rewards, next_states, dones = experiences
+        states, actions, rewards, next_states, dones, weightss = experiences
         
         # Compute target Q values from 'next_states'
-        next_Q_values = self.target_model.predict(next_states)
+        next_Q_values = self.target_model.predict([next_states, weightss])
+        
         max_next_Q_values = np.max(next_Q_values, axis=1)
         target_Q_values = (rewards +
                        (1 - dones) * self.gamma * max_next_Q_values)
@@ -406,7 +460,7 @@ class DQNAgent:
         mask = tf.one_hot(actions, 4) # 4 actions
         # Compute loss and gradient for predictions on 'states'
         with tf.GradientTape() as tape:
-            all_Q_values = self.model(states)
+            all_Q_values = self.model([next_states, weightss])
             Q_values = tf.reduce_sum(all_Q_values * mask, axis=1, 
                                      keepdims=True)
             loss = tf.reduce_mean(self.loss_fn(target_Q_values, Q_values))
@@ -415,13 +469,15 @@ class DQNAgent:
         self.optimizer.apply_gradients(zip(grads, 
                                            self.model.trainable_variables))
         
-    def train_model(self, episodes, reward_tracker):
+    def train_model(self, episodes, reward_tracker, weight_space):
         """
         Train the network over a range of episodes.
         """
         best_reward = -np.inf
         steps = 0
+        
         for episode in range(episodes):
+            weights = weight_space.sample()
             # Decay epsilon
             eps = max(self.eps0 - episode * EPSILON_DECAY, EPSILON_END)
             
@@ -432,7 +488,7 @@ class DQNAgent:
             while True:
                 
                 #eps = self.eps0
-                state, reward, done = self.play_one_step(state, eps)
+                state, reward, done = self.play_one_step(state, eps, weights)
                 steps += 1
                 episode_reward += reward
                 if done:
@@ -480,7 +536,7 @@ class DQNAgent:
         if image_path:
             fig.savefig(image_path)
     
-    def play_episode(self):
+    def play_episode(self, weights):
         """
         Play one episode using the DQN and display the grid image at each step.
         """
@@ -489,22 +545,49 @@ class DQNAgent:
         print("Initial State:")
         self.env.show(boundaries=True)
         i = 0
-        rewards = 0
+        episode_reward = 0
         while True:
             i += 1
             #qval = self.model.predict(state.reshape(1,self.input_size))
-            action = self.epsilon_greedy_policy(state, 0.05)
+            action = self.epsilon_greedy_policy(state, 0.05, weights)
             #action = (np.argmax(qval)) #take action with highest Q-value
             print('Move #: %s; Taking action: %s' % (i, action))
-            state, reward, done = self.env.step(action)
-            rewards += reward
+            state, rewards, done = self.env.step(action)
+            reward = np.dot(rewards, weights)
+            episode_reward += reward
             self.env.show(boundaries=True)
             if done:
-                print("Reward: %s" % (rewards,))
+                print(f'Reward: {episode_reward}')
                 break
-            
+
+def get_command_line_args(parser):
+    parser.add_argument("-i", "--ID",
+                        help="File ID for output")
+    parser.add_argument("-s", "--SEED", type=int,
+                        help="Random seed")
+    parser.add_argument("-e", "--EPISODES", type=int,
+                        help="Number of episodes")
+    parser.add_argument("-r", "--RESTARTS", type=int,
+                        help="Number of exploaration restarts")
+    return parser.parse_args()
+    
 
 if __name__ == '__main__':
+    # Get arguments from command line ...
+    parser = argparse.ArgumentParser()
+    args = get_command_line_args(parser)
+    SEED = args.SEED
+    PATH_ID = args.ID
+    
+    TRAINING_EPISODES = args.EPISODES
+    EXPLORATION_RESTARTS = args.RESTARTS
+    
+    IMAGE_PATH = f'plots/reward_plot_{PATH_ID}.png'
+    CSV_PATH = f'plots/reward_data_{PATH_ID}.csv'
+    MODEL_PATH = f'models/dqn_model_{PATH_ID}.h5'
+    
+    EPSILON_DECAY = 1 / (args.EPISODES / (args.RESTARTS + 1))
+    
     np.random.seed(SEED)
     tf.random.set_seed(SEED)
     random.seed(SEED)
@@ -521,19 +604,24 @@ if __name__ == '__main__':
     # Initialise Reward Tracker
     reward_track = RewardTracker(maxlen=MEAN_REWARD_EVERY)
     
+    # Initialise Preference Weight Space
+    pref_space = WeightSpace()
+    
     # Instantiate agent (pass in environment)
     dqn_ag = DQNAgent(item_env, replay_mem)
     
     # Train agent
-    dqn_ag.train_model(TRAINING_EPISODES, reward_track)
+    dqn_ag.train_model(TRAINING_EPISODES, reward_track, pref_space)
     for _ in range(EXPLORATION_RESTARTS):
-        dqn_ag.train_model(TRAINING_EPISODES, reward_track)
+        dqn_ag.train_model(TRAINING_EPISODES, reward_track, pref_space)
         
     dqn_ag.plot_learning_curve(image_path=IMAGE_PATH, 
                                csv_path=CSV_PATH)
     
     # Play episode with learned DQN
-    dqn_ag.play_episode()
+    weights = pref_space.sample()
+    print(f'\n{weights}\n')
+    dqn_ag.play_episode(weights)
 
     run_time = datetime.now() - start_time
     print(f'Run time: {run_time} s')
