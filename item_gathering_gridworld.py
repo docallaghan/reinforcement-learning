@@ -8,6 +8,7 @@ Author: David O'Callaghan
 import numpy as np
 import matplotlib.pyplot as plt
 import random
+import argparse
 
 import tensorflow as tf
 from tensorflow import keras
@@ -15,12 +16,23 @@ from tensorflow import keras
 from collections import deque # Used for replay buffer and reward tracking
 from datetime import datetime # Used for timing script
 
+# Get arguments from command line ...
+parser = argparse.ArgumentParser()
+parser.add_argument("-i", "--ID",
+                    help="File ID for output")
+parser.add_argument("-s", "--SEED", type=int,
+                    help="Random seed")
+parser.add_argument("-e", "--EPISODES", type=int,
+                    help="Number of episodes")
+parser.add_argument("-r", "--RESTARTS", type=int,
+                    help="Number of exploaration restarts")
+args = parser.parse_args()
 
 DEBUG = True
 IMAGE = True
-SEED = 42
+SEED = args.SEED
 
-PATH_ID = '003'
+PATH_ID = args.ID
 IMAGE_PATH = f'plots/reward_plot_{PATH_ID}.png'
 CSV_PATH = f'plots/reward_data_{PATH_ID}.csv'
 MODEL_PATH = f'models/dqn_model_{PATH_ID}.h5'
@@ -28,10 +40,12 @@ MODEL_PATH = f'models/dqn_model_{PATH_ID}.h5'
 REPLAY_MEMORY_SIZE = 3000
 BATCH_SIZE = 64
 
-EPSILON_DECAY = 1 / 2000
+EPSILON_DECAY = 1 / (args.EPISODES / (args.RESTARTS + 1))
 EPSILON_END = 0.05
 
-TRAINING_EPISODES = 3000
+TRAINING_EPISODES = args.EPISODES
+EXPLORATION_RESTARTS = args.RESTARTS
+
 COPY_TO_TARGET_EVERY = 1000 # Steps
 START_TRAINING_AFTER = 50 # Episodes
 MEAN_REWARD_EVERY = 10 # Episodes
@@ -447,6 +461,8 @@ class DQNAgent:
     
     def load_model(self, path):
         self.model = keras.models.load_model(path)
+        self.target_model = keras.models.clone_model(self.model)
+        self.target_model.set_weights(self.model.get_weights())
             
     def plot_learning_curve(self, image_path=None, csv_path=None):
         """
@@ -510,6 +526,9 @@ if __name__ == '__main__':
     
     # Train agent
     dqn_ag.train_model(TRAINING_EPISODES, reward_track)
+    for _ in range(EXPLORATION_RESTARTS):
+        dqn_ag.train_model(TRAINING_EPISODES, reward_track)
+        
     dqn_ag.plot_learning_curve(image_path=IMAGE_PATH, 
                                csv_path=CSV_PATH)
     
