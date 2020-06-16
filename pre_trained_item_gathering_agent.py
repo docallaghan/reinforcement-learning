@@ -6,7 +6,7 @@ Author: David O'Callaghan
 """
 
 from item_gathering_gridworld import ItemGatheringGridworld
-from item_gathering_gridworld import DQNAgent
+from item_gathering_gridworld  import DQNAgent
 
 import numpy as np
 import random
@@ -16,7 +16,7 @@ from datetime import datetime # Used for timing script
 import time
 
 SEED = 42
-PATH_ID = '001'
+PATH_ID = '014'
 MODEL_PATH = f'models/dqn_model_{PATH_ID}.h5'
 
 
@@ -39,8 +39,8 @@ if __name__ == '__main__':
     dqn_ag.load_model(MODEL_PATH)
     
     # Play episode with learned DQN
-    for _ in range(10):
-        dqn_ag.play_episode()
+    for _ in range(15):
+        dqn_ag.play_episode(np.array([20, 5, 5, 10]))
         time.sleep(0.5)
 
     run_time = datetime.now() - start_time

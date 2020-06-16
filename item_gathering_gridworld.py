@@ -17,7 +17,7 @@ from collections import deque # Used for replay buffer and reward tracking
 from datetime import datetime # Used for timing script
 
 
-DEBUG = True
+DEBUG = False
 # IMAGE = True
 
 REPLAY_MEMORY_SIZE = 3000
@@ -308,8 +308,8 @@ class RewardTracker:
 class WeightSpace:
     def __init__(self):
         # [Green, Red, Yellow, Time]
-        self.distribution = [np.array([10, 10, 10, 10]), # Equal preferences
-                             np.array([20, 5, 5, 10]) # Prefers green
+        self.distribution = [np.array([10, 10, 10, 1]), # Equal preferences
+                             np.array([20, 5, 5, 1]) # Prefers green
                              ]
     def sample(self):
         return np.array(random.choice(self.distribution), dtype=np.float32)
@@ -317,7 +317,7 @@ class WeightSpace:
 
 class DQNAgent:
     
-    def __init__(self, env, replay_memory):
+    def __init__(self, env, replay_memory=None):
         self.env = env
         self.actions = [i for i in range(len(env.actions))] 
         
@@ -336,11 +336,6 @@ class DQNAgent:
         # Make weights the same
         self.target_model.set_weights(self.model.get_weights())
         
-        # Temporary
-        self.pref_weights = [np.array([10, 10, 10]), # Equal preferences
-                             np.array([20, 5, 5]) # Prefers green
-                             ]
-        
     def build_model(self):
         """
         Construct the DQN model.
@@ -352,9 +347,9 @@ class DQNAgent:
         
         # Convolutional Layers for image
         # - Define Layers
-        conv2d_1 = keras.layers.Conv2D(filters=8, kernel_size=(3, 3), activation='relu')
+        conv2d_1 = keras.layers.Conv2D(filters=16, kernel_size=(3, 3), activation='relu')
         dropout_1 = keras.layers.Dropout(rate=0.2)
-        conv2d_2 = keras.layers.Conv2D(filters=16, kernel_size=(3, 3), activation='relu')
+        conv2d_2 = keras.layers.Conv2D(filters=32, kernel_size=(3, 3), activation='relu')
         dropout_2 = keras.layers.Dropout(rate=0.2)
         flatten = keras.layers.Flatten()
         # - Define Architecture
@@ -366,7 +361,7 @@ class DQNAgent:
         
         # Dense layers for weight input concatenated with conv layers output
         # - Define Layers
-        dense = keras.layers.Dense(32, activation='relu')
+        dense = keras.layers.Dense(64, activation='relu')
         output = keras.layers.Dense(self.output_size)
         # - Define Architecture
         dense_input = keras.layers.concatenate([image_output, weights_input])
@@ -377,7 +372,7 @@ class DQNAgent:
         model = keras.Model(inputs=[image_input, weights_input], outputs=outputs)
         
         # Define optimizer and loss function
-        self.optimizer = keras.optimizers.Adam(lr=1e-3)
+        self.optimizer = keras.optimizers.Adam(lr=1e-4)
         self.loss_fn = keras.losses.mean_squared_error
         
         return model
@@ -624,5 +619,5 @@ if __name__ == '__main__':
     dqn_ag.play_episode(weights)
 
     run_time = datetime.now() - start_time
-    print(f'Run time: {run_time} s')
+    print(f'\n Run time: {run_time} s')
     
